@@ -317,6 +317,7 @@ export default function Home() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [isSendingLink, setIsSendingLink] = useState(false);
+  const [magicLinkCooldown, setMagicLinkCooldown] = useState(0);
   const [authMessage, setAuthMessage] = useState("");
   const [profileSaveMessage, setProfileSaveMessage] = useState("");
   const [historyRecords, setHistoryRecords] = useState<IdeaGenerationHistoryRow[]>([]);
@@ -479,6 +480,14 @@ export default function Home() {
       if (saveMessageTimerRef.current) window.clearTimeout(saveMessageTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (magicLinkCooldown <= 0) return;
+    const timerId = window.setTimeout(() => {
+      setMagicLinkCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => window.clearTimeout(timerId);
+  }, [magicLinkCooldown]);
 
   function updateProfile<K extends keyof CreatorProfile>(key: K, value: CreatorProfile[K]) {
     setProfile((prev) => ({ ...prev, [key]: value }));
@@ -665,16 +674,27 @@ export default function Home() {
   }
 
   async function sendMagicLink() {
-    if (!authEmail.trim() || isSendingLink) return;
+    if (!authEmail.trim() || isSendingLink || magicLinkCooldown > 0) return;
     setAuthMessage("");
     setIsSendingLink(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email: authEmail.trim(),
-    });
-    if (error) {
+    setMagicLinkCooldown(60);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: authEmail.trim(),
+      });
+      if (error) {
+        console.error("Magic link send failed:", error);
+        if ((error.message || "").toLowerCase().includes("email rate limit exceeded")) {
+          setAuthMessage("发送过于频繁，请稍后再试");
+        } else {
+          setAuthMessage(error.message || "发送失败，请稍后重试");
+        }
+      } else {
+        setAuthMessage("登录链接已发送，请检查邮箱");
+      }
+    } catch (e) {
+      console.error("Magic link send crashed:", e);
       setAuthMessage("发送失败，请稍后重试");
-    } else {
-      setAuthMessage("登录链接已发送，请检查邮箱");
     }
     setIsSendingLink(false);
   }
@@ -740,10 +760,14 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={sendMagicLink}
-                      disabled={isSendingLink}
+                      disabled={isSendingLink || magicLinkCooldown > 0}
                       className="w-full rounded-xl bg-white px-3 py-2 text-xs font-semibold text-[#b3122a] ring-1 ring-[#ff2442]/20 hover:bg-[#fff5f7] transition disabled:opacity-60"
                     >
-                      {isSendingLink ? "发送中..." : "发送登录链接"}
+                      {isSendingLink
+                        ? "发送中..."
+                        : magicLinkCooldown > 0
+                          ? `请等待 ${magicLinkCooldown} 秒`
+                          : "发送登录链接"}
                     </button>
                   </div>
                 )}
